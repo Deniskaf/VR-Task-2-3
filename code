@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>VR Сбор объектов</title>
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/donmccurdy/aframe-extras@v6.1.1/dist/aframe-extras.loaders.min.js"></script>
+    <!-- Подключаем ассет для частиц -->
+    <script src="https://cdn.jsdelivr.net/gh/feiss/aframe-particle-system-component@v1.1/dist/aframe-particle-system-component.min.js"></script>
+    <style>
+        .game-over-panel {
+            background-color: rgba(255, 255, 255, 0.95);
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            width: 300px;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 9999;
+        }
+        .restart-btn {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 15px;
+            display: inline-block;
+            transition: background-color 0.3s;
+            border: none;
+            font-size: 16px;
+        }
+        .restart-btn:hover {
+            background-color: #45a049;
+        }
+    </style>
+</head>
+<body>
+    <a-scene cursor="rayOrigin: mouse">
+        <!-- Освещение -->
+        <a-entity light="type: ambient; intensity: 0.8"></a-entity>
+        <a-entity light="type: directional; intensity: 1.5" position="-1 2 1"></a-entity>
+
+        <!-- Небо и пол -->
+        <a-sky color="#6EBAA7"></a-sky>
+        <a-plane position="0 0 0" rotation="-90 0 0" width="20" height="20" color="#333333" shadow></a-plane>
+
+        <!-- Камера с курсором -->
+        <a-entity id="player" position="0 1.6 0">
+            <a-entity camera look-controls wasd-controls>
+                <a-entity cursor="fuse: false" position="0 0 -1"
+                          geometry="primitive: ring; radiusInner: 0.02; radiusOuter: 0.03"
+                          material="color: white; shader: flat">
+                </a-entity>
+            </a-entity>
+        </a-entity>
+
+        <!-- Система частиц для эффекта сбора -->
+        <a-entity id="explosion" particle-system="preset: default; color: yellow; size: 0.2; particleCount: 50" position="0 -10 0"></a-entity>
+
+        <!-- Звук сбора -->
+        <a-assets>
+            <audio id="collect-sound" src="https://cdn.aframe.io/360-image-gallery-boilerplate/audio/click.ogg"></audio>
+            <a-asset-item id="tree-model" src="https://cdn.aframe.io/test-models/models/tree/scene.gltf"></a-asset-item>
+            <a-asset-item id="rock-model" src="https://cdn.aframe.io/test-models/models/rocks/scene.gltf"></a-asset-item>
+        </a-assets>
+        <a-sound src="#collect-sound" autoplay="false" id="collectSound"></a-sound>
+
+        <!-- Объекты для сбора -->
+        <a-entity id="collectibles-container">
+            <!-- Статические объекты -->
+            <a-box id="box1" position="-2 0.5 -3" color="#EF2D5E" class="collectible" shadow></a-box>
+            <a-sphere id="sphere1" position="0 0.5 -4" color="#F7B733" radius="0.3" class="collectible" shadow></a-sphere>
+            <a-cylinder id="cylinder1" position="2 0.5 -3" color="#4ABDAC" radius="0.3" height="0.5" class="collectible" shadow></a-cylinder>
+            
+            <!-- Движущиеся объекты -->
+            <a-entity id="movingObj1" geometry="primitive: cone" material="color: red"
+                      position="-3 0.5 -5" animation="property: position; to: 3 0.5 -5; dur: 3000; loop: true; dir: alternate" class="collectible" shadow></a-entity>
+            <a-entity id="movingObj2" geometry="primitive: torus" material="color: purple"
+                      position="0 0.5 -6" animation="property: position; to: 0 0.5 -10; dur: 4000; loop: true; dir: alternate" class="collectible" shadow></a-entity>
+            
+            <!-- 3D модели из ассетов -->
+            <a-entity id="tree1" gltf-model="#tree-model" position="0 0 -8" scale="0.5 0.5 0.5" class="collectible" shadow></a-entity>
+            <a-entity id="rock1" gltf-model="#rock-model" position="3 0 -7" scale="0.3 0.3 0.3" class="collectible" shadow></a-entity>
+        </a-entity>
+
+        <!-- Интерфейс -->
+        <a-text id="score" value="Счет: 0" position="-0.8 1.5 -1" color="white"></a-text>
+        <a-text id="timer" value="Время: 60" position="0.8 1.5 -1" color="white"></a-text>
+        <a-text id="student" value="Соломенный Ю.Ю." position="0 1.8 -1" color="white" align="center"></a-text>
+    </a-scene>
+
+    <script>
+        // Ждем загрузки сцены
+        document.querySelector('a-scene').addEventListener('loaded', function() {
+            const scoreEl = document.querySelector('#score');
+            const timerEl = document.querySelector('#timer');
+            let score = 0;
+            let timeLeft = 60;
+            let gameActive = true;
+            
+            // Список всех собираемых объектов
+            const collectibles = [
+                {id: 'box1', type: 'box', color: '#EF2D5E'},
+                {id: 'sphere1', type: 'sphere', color: '#F7B233', radius: 0.3},
+                {id: 'cylinder1', type: 'cylinder', color: '#4ABDAC', radius: 0.3, height: 0.5},
+                {id: 'movingObj1', type: 'cone', color: 'red'},
+                {id: 'movingObj2', type: 'torus', color: 'purple'},
+                {id: 'tree1', type: 'gltf', model: '#tree-model', scale: '0.5 0.5 0.5'},
+                {id: 'rock1', type: 'gltf', model: '#rock-model', scale: '0.3 0.3 0.3'}
+            ];
+
+            // Функция для получения случайной позиции
+            function getRandomPosition() {
+                const x = (Math.random() * 10) - 5; // от -5 до 5
+                const z = -3 - (Math.random() * 7); // от -3 до -10
+                return {x: x, y: 0.5, z: z};
+            }
+
+            // Функция для эффекта сбора
+            function showExplosion(position) {
+                const explosion = document.querySelector('#explosion');
+                explosion.setAttribute('position', position);
+                explosion.setAttribute('particle-system', 'enabled: true');
+                
+                // Отключаем эффект через 500 мс
+                setTimeout(() => {
+                    explosion.setAttribute('particle-system', 'enabled: false');
+                    explosion.setAttribute('position', '0 -10 0');
+                }, 500);
+            }
+
+            // Функция для респауна объекта
+            function respawnObject(id) {
+                setTimeout(() => {
+                    if (!gameActive) return;
+                    
+                    const objInfo = collectibles.find(obj => obj.id === id);
+                    if (!objInfo) return;
+                    
+                    const position = getRandomPosition();
+                    let newObj;
+                    
+                    if (objInfo.type === 'box') {
+                        newObj = document.createElement('a-box');
+                        newObj.setAttribute('width', '0.5');
+                        newObj.setAttribute('height', '0.5');
+                        newObj.setAttribute('depth', '0.5');
+                    } 
+                    else if (objInfo.type === 'sphere') {
+                        newObj = document.createElement('a-sphere');
+                        newObj.setAttribute('radius', objInfo.radius);
+                    }
+                    else if (objInfo.type === 'cylinder') {
+                        newObj = document.createElement('a-cylinder');
+                        newObj.setAttribute('radius', objInfo.radius);
+                        newObj.setAttribute('height', objInfo.height);
+                    }
+                    else if (objInfo.type === 'cone') {
+                        newObj = document.createElement('a-cone');
+                        newObj.setAttribute('radius-bottom', '0.3');
+                        newObj.setAttribute('radius-top', '0');
+                        newObj.setAttribute('height', '0.5');
+                        // Добавляем анимацию движения
+                        newObj.setAttribute('animation', `property: position; to: ${position.x + (Math.random() * 6 - 3)} ${position.y} ${position.z + (Math.random() * 4 - 2)}; dur: ${2000 + Math.random() * 3000}; loop: true; dir: alternate`);
+                    }
+                    else if (objInfo.type === 'torus') {
+                        newObj = document.createElement('a-torus');
+                        newObj.setAttribute('radius', '0.3');
+                        newObj.setAttribute('radius-tubular', '0.1');
+                        // Добавляем анимацию движения
+                        newObj.setAttribute('animation', `property: position; to: ${position.x + (Math.random() * 6 - 3)} ${position.y} ${position.z + (Math.random() * 4 - 2)}; dur: ${2000 + Math.random() * 3000}; loop: true; dir: alternate`);
+                    }
+                    else if (objInfo.type === 'gltf') {
+                        newObj = document.createElement('a-entity');
+                        newObj.setAttribute('gltf-model', objInfo.model);
+                        newObj.setAttribute('scale', objInfo.scale);
+                    }
+                    
+                    newObj.setAttribute('id', objInfo.id);
+                    newObj.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
+                    if (objInfo.color) newObj.setAttribute('color', objInfo.color);
+                    newObj.setAttribute('class', 'collectible');
+                    newObj.setAttribute('shadow', '');
+                    
+                    document.querySelector('#collectibles-container').appendChild(newObj);
+                }, 2000); // Респаун через 2 секунды
+            }
+
+            // Функция для обработки сбора объектов
+            function handleCollection(event) {
+                if (!gameActive) return;
+                
+                const target = event.target;
+                if (target.classList.contains('collectible')) {
+                    // Эффект сбора
+                    const pos = target.getAttribute('position');
+                    showExplosion(pos);
+                    
+                    // Звук сбора
+                    document.querySelector('#collectSound').components.sound.playSound();
+                    
+                    // Увеличиваем счет
+                    score++;
+                    scoreEl.setAttribute('value', `Счет: ${score}`);
+                    
+                    // Удаляем объект
+                    target.parentNode.removeChild(target);
+                    
+                    // Респауним объект
+                    respawnObject(target.id);
+                }
+            }
+
+            // Добавляем обработчик клика на всю сцену
+            document.querySelector('a-scene').addEventListener('click', handleCollection);
+
+            // Таймер
+            const timerInterval = setInterval(() => {
+                if (!gameActive) return;
+                
+                timeLeft--;
+                timerEl.setAttribute('value', `Время: ${timeLeft}`);
+                
+                if (timeLeft <= 0) {
+                    clearInterval(timerInterval);
+                    endGame();
+                }
+            }, 1000);
+
+            // Завершение игры
+            function endGame() {
+                gameActive = false;
+                
+                // Блокируем управление
+                document.querySelector('#player').removeAttribute('wasd-controls');
+                document.querySelector('#player').removeAttribute('look-controls');
+                
+                // Создаем панель завершения игры
+                const gameOverDiv = document.createElement('div');
+                gameOverDiv.className = 'game-over-panel';
+                gameOverDiv.innerHTML = `
+                    <h1 style="color: #E74C3C; margin-bottom: 10px;">Игра окончена!</h1>
+                    <p style="font-size: 18px; margin-bottom: 20px; color: #333;">Ваш счет: <strong>${score}</strong></p>
+                    <button class="restart-btn" id="restartBtn">Играть снова</button>
+                `;
+                
+                document.body.appendChild(gameOverDiv);
+                
+                // Обработчик для кнопки перезапуска
+                document.getElementById('restartBtn').addEventListener('click', () => {
+                    location.reload();
+                });
+            }
+        });
+    </script>
+</body>
+</html>
